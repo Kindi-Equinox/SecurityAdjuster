@@ -1,5 +1,6 @@
 
     local defaultConfig = {
+        isModActive = true,
         showUnlockChance = true,
         showDisarmChance = true,
         showKeyName = true,

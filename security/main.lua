@@ -1,10 +1,11 @@
 --[[v2.7]]
---add option to configure tooltip refresh frequency (improve fps)
+--add option to enable and disable mod
+--add option to configure tooltip refresh frequency
 --add option to show trapped status by severity
 --add option to show tooltip without needing to equip a security tool
 --add option to show enchantment-like visual effect on trapped objects
 --improve text justification
---fix showing the wrong skill name of trap
+--fix displaying the wrong skill name of trap
 local data = require("kindi.security.data")
 local config
 local UIExpansionInstalled = lfs.fileexists(tes3.installDirectory .. "\\data files\\mwse\\mods\\UI Expansion\\main.lua")
@@ -14,9 +15,19 @@ local nuisance = table.invert {46, 47, 48}
 local unsafe = table.invert {17, 19, 20, 21, 22, 24, 25, 26, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 45, 87, 88, 89}
 local trapSeverity = {"Safe", "Harmless", "Unsafe", "Painful", "Dangerous", "Deadly"}
 
-local function isContainerOrDoor(reference)
+local function inventorySize(ref)
+    if ref.object.inventory then
+        return #ref.object.inventory
+    end
+end
+
+local function isContainerOrDoor(reference, type)
+    if type then
+        return reference.object.objectType == type
+    else
     return (reference.object.objectType == tes3.objectType.container or
         reference.object.objectType == tes3.objectType.door)
+    end
 end
 
 local function pickIsEquipped()
@@ -30,7 +41,7 @@ local function probeIsEquipped()
 end
 
 local function getLocked(reference)
-    return reference.lockNode.locked
+    return tes3.getLocked {reference = reference}
 end
 
 local function getTrap(reference)
@@ -38,7 +49,7 @@ local function getTrap(reference)
 end
 
 local function getKey(reference)
-    return reference.lockNode.key
+    return reference.lockNode and reference.lockNode.key
 end
 
 local function getLockDifficulty(lvl)
@@ -296,43 +307,13 @@ local function objectTooltip(e)
     if not e.reference then
         return
     end
-
-    local lockLabel = e.tooltip:findChild("HelpMenu_locked")
-    local trapLabel = e.tooltip:findChild("HelpMenu_trapped")
-
-    if e.reference.lockNode and (e.reference.lockNode.locked or e.reference.lockNode.trap) then
-        --[skip quickloot menu if this object is locked or trapped]
-        if QuickLootInterop then
-            QuickLootInterop.skipNextTarget = true
-        end
-    end
-
-    --[hack for quickloot compatibility]
-    if QuickLootInterop and mwse.loadConfig("QuickLoot") then
-        if e.reference.object.inventory and #e.reference.object.inventory == 0 then
-            if not (tes3.getLocked {reference = e.reference} or tes3.getTrap {reference = e.reference}) then
-                if mwse.loadConfig("QuickLoot").modDisabled == false then
-                    if tes3ui.findMenu("QuickLoot:Menu") then
-                        tes3ui.findMenu("QuickLoot:Menu").visible = true
-                    end
-                end
-            end
-        end
-    end
-
-    if not e.reference.lockNode then
+    
+    if not config.isModActive then
         return
     end
-
-    if config.tooltipRefreshFrequency and not tes3.menuMode() then
-        timer.start {
-            duration = config.tooltipRefreshFrequency ~= 0 and config.tooltipRefreshFrequency or
-                tes3.worldController.deltaTime,
-            callback = function()
-                tes3ui.refreshTooltip()
-            end
-        }
-    end
+    
+    local lockLabel = e.tooltip:findChild("HelpMenu_locked")
+    local trapLabel = e.tooltip:findChild("HelpMenu_trapped")
 
     --createVisualEffect is better than applyEnchantEffect
     if isContainerOrDoor(e.reference) then
@@ -343,11 +324,58 @@ local function objectTooltip(e)
             tes3.removeVisualEffect {reference = e.reference}
         end
     end
-
+    
+    --Hack for Quick Loot compatibility
+    --This block of code will only run if Quick Loot is enabled
+    if QuickLootInterop and mwse.loadConfig("QuickLoot") and not mwse.loadConfig("QuickLoot").modDisabled then
+        if getLocked(e.reference) or getTrap(e.reference) then
+            --Skip Quick Loot menu if this object is locked or trapped unless Quick Loot 'hide trapped' is enabled
+            if mwse.loadConfig("QuickLoot").hideTooltip then 
+                e.tooltip.maxWidth = 1600
+                e.tooltip.maxHeight = 1600
+            end
+            if mwse.loadConfig("QuickLoot").hideLocked then
+                e.tooltip.maxWidth = 0
+                e.tooltip.maxHeight = 0
+            end
+            if mwse.loadConfig("QuickLoot").hideTrapped then
+                QuickLootInterop.skipNextTarget = true
+            else
+                if getLocked(e.reference) or inventorySize(e.reference) == 0 then
+                    QuickLootInterop.skipNextTarget = true
+                end
+            end
+        else
+            --Skip the rest of the code if this object is neither locked nor trapped with the following conditions
+            if tes3ui.findMenu("QuickLoot:Menu") then
+                tes3ui.findMenu("QuickLoot:Menu").visible = true
+            end
+            if mwse.loadConfig("QuickLoot").hideLocked then 
+                e.tooltip.maxWidth = 1600
+                e.tooltip.maxHeight = 1600
+            end
+            if mwse.loadConfig("QuickLoot").hideTooltip and isContainerOrDoor(e.reference, tes3.objectType.container) then 
+                e.tooltip.maxWidth = 0
+                e.tooltip.maxHeight = 0
+            end
+            return
+        end
+    end
+    
     if not getLocked(e.reference) and not getTrap(e.reference) then
         return
     end
-
+    
+    if config.tooltipRefreshFrequency and not tes3.menuMode() then
+        timer.start {
+            duration = config.tooltipRefreshFrequency ~= 0 and config.tooltipRefreshFrequency or
+                tes3.worldController.deltaTime,
+            callback = function()
+                tes3ui.refreshTooltip()
+            end
+        }
+    end
+    
     if lockLabel then
         if config.lockLevelDisplay == "Difficulty" then
             lockLabel.text =
@@ -389,7 +417,7 @@ local function objectTooltip(e)
     end
 
     if getLocked(e.reference) then
-        chanceLabelPick = string.format("Unlock Chance: %s", getUnlockChance(e.reference))
+        chanceLabelPick = string.format("Lockpick Chance: %s", getUnlockChance(e.reference))
     end
 
     if getTrap(e.reference) then
@@ -445,6 +473,9 @@ local function objectTooltip(e)
 end
 
 local function activationTargetChanged(e)
+    if not config.isModActive then
+        return
+    end
     if config.showTrapEnchantmentEffect ~= "Target" then
         return
     end

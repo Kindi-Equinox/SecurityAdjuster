@@ -26,6 +26,21 @@ local page =
     noScroll = false
 }
 
+local modActive = page:createCategory("Mod Status")
+
+modActive:createOnOffButton{
+    label = "Mod status",
+    description = "Turns the mod on or off",
+    variable = EasyMCM.createTableVariable {id = "isModActive", table = config},
+    callback = function()
+        if config.isModActive then
+            tes3.messageBox("Mod is ON")
+        else
+            tes3.messageBox("Mod is OFF")
+        end
+    end
+}
+
 local general = page:createCategory("General")
 
 general:createYesNoButton {
